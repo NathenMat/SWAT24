@@ -5,6 +5,7 @@ import pandas as pd
 import numpy as np
 import os
 import signal
+import random
 
 from pyprof2calltree import convert
 
@@ -18,18 +19,6 @@ from l_budget_clustering import (
     LBudgetClustering,
     DynamicLBudgetClustering,
     ScalingDynamicLBudgetClustering,
-    # cpp_Curves,
-    # cpp_klcenter,
-)
-
-
-from light_frechet import (
-    # LightCurve,
-    # LightCurves,
-    calc_distance,
-    less_than_with_filters,
-    simplify_num,
-    simplify_eps,
 )
 
 
@@ -63,6 +52,7 @@ def static_lbudget(curves, big_l, fast_simplification=True):
     return LBudgetClustering(big_l, fast_simplification=fast_simplification).main(
         curves
     )
+
 
 def static_lbudget_new(curves, big_l, fast_simplification=True):
     return LBudgetClustering(big_l, fast_simplification=fast_simplification, new_decider=True).main(
@@ -119,11 +109,12 @@ def dynamic_lbudget(curves, big_l, fast_simplification=True):
 
 
 def scaling_dynamic_lbudget(curves, big_l, fast_simplification=True):
-    return list(
+    erg = list(
         ScalingDynamicLBudgetClustering(
             big_l, SIMPLIFICATION_ERROR, CLUSTER_ERROR, track_curves=True, fast_simplification=fast_simplification
         ).main(curves)
-    )[-1][0]
+    )[-1]
+    return erg
 
 
 def convert_clustering(cpp_clustering, curves):
@@ -203,13 +194,17 @@ def test_instance(algorithm, curves, big_l, results, praefix=""):
 
     if clustering is None:
         bigger_ls = [ell for ell in budget_list if ell >= big_l]
-        more_curves = [num_curves for num_curves in num_curves_list if num_curves >= len(curves)]
-        blocked_values = blocked_values.union(set(it.product(bigger_ls, more_curves, [algorithm])))
+        more_curves = [
+            num_curves for num_curves in num_curves_list if num_curves >= len(curves)
+        ]
+        blocked_values = blocked_values.union(
+            set(it.product(bigger_ls, more_curves, [algorithm]))
+        )
         print(f"Timeout occurred while running {algorithm}")
         clustering = Clustering()
         radius = pd.NA
     elif isinstance(clustering, list):
-        clustering = compute_best_clustering(algorithm, curves, clustering)
+        clustering = compute_best_clustering(curves, clustering)
     else:
         clustering = clustering.compute_assignment()
 
@@ -230,7 +225,7 @@ def export_stats(
     filenamemid = f"num_cluster={num_clusters}, radius={radius}, cplx={complexity}"
     filename = namestart + filenamemid
 
-    clustering.plot_clusters(save=True, savename=filename)
+    clustering.plot_clusters(save=True, savename=filename, hippodrome=True)
     stats = pstats.Stats(profiler)
     data_frame = pd.concat(
         [
@@ -255,62 +250,77 @@ def export_stats(
     return data_frame
 
 
-def compute_best_clustering(algorithm, curves, clustering):
+def compute_best_clustering(curves, clustering):
     clusterings = clustering
     clusterings = [clustering.compute_assignment(curves) for clustering in clusterings]
     clustering = min(clusterings, key=lambda x: x.radius)
     return clustering
 
 
-
 csv = pd.read_csv(file, usecols=["Longitude", "Latitude", "Filename"])
 
-# for location in ["ch_", "bh_", "H", "FT_", ]:
-filenamestart = f"./Experiments40/"  # {location}/"
-if not os.path.exists(filenamestart):
-    os.makedirs(filenamestart)
-if os.path.exists(f"{filenamestart}Pidgeon.csv"):
-    data_frame = pd.read_csv(f"{filenamestart}Pidgeon.csv")
-else:
-    data_frame = pd.DataFrame(columns=["Budget", "Curves", "Algorithm"])
+for location in [
+    "ch_",
+    # "bh_",
+    # "H",
+    # "FT_",
+]:
+    filenamestart = f"./Experiments47{location}/"  # {location}/"
+    if not os.path.exists(filenamestart):
+        os.makedirs(filenamestart)
+    if os.path.exists(f"{filenamestart}Pidgeon.csv"):
+        data_frame = pd.read_csv(f"{filenamestart}Pidgeon.csv")
+    else:
+        data_frame = pd.DataFrame(columns=["Budget", "Curves", "Algorithm"])
 
-# csv_location = csv[csv["Filename"].str.startswith(location)]
-csv_grouped = csv.groupby("Filename")
-curves_lbudget = []
-for group, _ in zip(csv_grouped, range(1000)):
-    thing = csv_grouped.get_group(str(group[0]))
-    curve = np.array([thing["Longitude"], thing["Latitude"]]).T
-    curve = Curve(curve).simplify_dist_fast(400)[0]
-    curves_lbudget.append(curve)
+    csv_location = csv[csv["Filename"].str.startswith(location)]
+    csv_grouped = csv_location.groupby("Filename")
+    curves_lbudget = []
+    for group, _ in zip(csv_grouped, range(1000)):
+        thing = csv_grouped.get_group(str(group[0]))
+        curve = np.array([thing["Longitude"], thing["Latitude"]]).T
+        curve = Curve(curve).simplify_dist_fast(400)[0]
+        curves_lbudget.append(curve)
 
-budget_list = np.unique(np.geomspace(2, 10_000, num=10, dtype=int))  # 54
-num_curves_list = np.unique(np.geomspace(2, 897, num=5, dtype=int))  # 23
-# num_curves_list = [25, ]
-# budget_list = [50, ]
-product = it.product(budget_list, num_curves_list)
-sorted_product = sorted(product, key=lambda x: x[0] * x[1])
-blocked_values = set()
-computed_values = [(budget, number_of_curves, algorithm) for (budget, number_of_curves, algorithm) in data_frame[["Budget", "Curves", "Algorithm"]].values]
-blocked_values = blocked_values.union(set(computed_values))
-for budget, number_of_curves in sorted_product:
-    for algorithm in [
-        # "static_lbudget",
-        "static_lbudget_new",
-        "dynamic_lbudget",
-        "scaling_dynamic_lbudget",
-        "kl_center",
-        "dynamic_kl_center",
-        "scaling_dynamic_kl_center",
-    ]:
+    random.seed(0)
+    budget_list = np.unique(np.geomspace(2, 1_000, num=20, dtype=int))  # 54
+    num_curves_list = np.unique(np.geomspace(2, 897, num=23, dtype=int))  # 23
+    selected_curves = curves_lbudget
+    selected_curves : list[Curve] = random.sample(curves_lbudget, 23)
+    selected_curves.append(curves_lbudget[119])
+    selected_curves.append(curves_lbudget[82])
+    # selected_curves = [curve.simplify_dist_fast(10000)[0] for curve in selected_curves]
+    # budget_list = [200, ]
+    num_curves_list = [slice(0, 120, 2),] #slice(0, 120, 3), slice(0, 120, 4), slice(0, 120, 5), slice(0, 120, 6), slice(0, 120, 7)]
+    product = it.product(budget_list, num_curves_list)
+    sorted_product = sorted(product, key=lambda x: x[0] * 1)
+    blocked_values = set()
+    computed_values = [
+        (budget, number_of_curves, algorithm)
+        for (budget, number_of_curves, algorithm) in data_frame[
+            ["Budget", "Curves", "Algorithm"]
+        ].values
+    ]
+    blocked_values = blocked_values.union(set(computed_values))
+    for budget, number_of_curves in sorted_product:
+        for algorithm in [
+            "static_lbudget_new",
+            "static_lbudget",
+            "dynamic_lbudget",
+            "scaling_dynamic_lbudget",
+            "kl_center",
+            "dynamic_kl_center",
+            "scaling_dynamic_kl_center",
+        ]:
 
-        if (budget, number_of_curves, algorithm) in blocked_values:
-            continue
-        curves = curves_lbudget[:number_of_curves]
-        data_frame = test_instance(
-            algorithm,
-            curves,
-            budget,
-            data_frame,
-            praefix=f"{filenamestart}Pidgeon ",
-        )
-        data_frame.to_csv(f"{filenamestart}Pidgeon.csv")
+            # if (budget, number_of_curves, algorithm) in blocked_values:
+            #     continue
+            curves = curves_lbudget[number_of_curves] #[:number_of_curves]
+            data_frame = test_instance(
+                algorithm,
+                selected_curves,
+                budget,
+                data_frame,
+                praefix=f"{filenamestart}Pidgeon ",
+            )
+            data_frame.to_csv(f"{filenamestart}Pidgeon.csv")
